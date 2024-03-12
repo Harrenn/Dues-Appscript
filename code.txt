@@ -1,0 +1,96 @@
+function getMonthlyDues() {
+  Logger.log("Starting getMonthlyDues");
+
+  var threadsElectric = GmailApp.search('from:customercare@meralco.com.ph', 0, 2); // Get two most recent emails
+  var electricBill = findBillAmount(threadsElectric, /Current Amount Due:.*?PHP (\d+\.\d{2})/);
+
+  var threadsWater = GmailApp.search('from:esoa@mayniladwater.com.ph', 0, 2); // Get two most recent emails
+  var waterBill = findBillAmount(threadsWater, /Total Bill : P(\d+\.\d{2}) /);
+
+  updateGoogleSheet(waterBill, electricBill);
+}
+
+function findBillAmount(threads, regex) {
+  for (var i = 0; i < threads.length; i++) {
+    var message = threads[i].getMessages().pop();
+    var amountMatch = message.getBody().match(regex);
+    if (amountMatch) {
+      var billAmount = parseFloat(amountMatch[1]);
+      Logger.log("Bill Amount Found: " + billAmount);
+      return billAmount;
+    }
+  }
+  Logger.log("No Bill Amount Found in Emails");
+  return 0;
+}
+
+function updateGoogleSheet(waterBill, electricBill) {
+  Logger.log("Starting updateGoogleSheet");
+  var ssId = "12gLlyxjAj7wDXp4_69qThhTN3RiLvOt0MyV0xjIsPTE";
+  var spreadsheet = SpreadsheetApp.openById(ssId);
+
+  if (!spreadsheet) {
+    Logger.log("Spreadsheet is undefined in updateGoogleSheet");
+    return;
+  }
+
+  var sheet = spreadsheet.getActiveSheet();
+  sheet.getRange("B10").setValue(waterBill);
+  sheet.getRange("F10").setValue(electricBill);
+
+  var month = sheet.getRange("B1").getDisplayValue();
+  var newFileName = "Dues for " + month;
+  var folderId = "1StlCA2S0Q56XfFAY8rgjlGW2nBVW6TcO";
+  var file = DriveApp.getFileById(spreadsheet.getId());
+  var folder = DriveApp.getFolderById(folderId);
+  var newFile = file.makeCopy(newFileName, folder);
+
+  sendEmails(newFile.getUrl(), spreadsheet, month);
+}
+
+function sendEmails(sheetUrl, spreadsheet, month) {
+  Logger.log("Starting sendEmails");
+  if (!spreadsheet) {
+    Logger.log("Spreadsheet is undefined in sendEmails");
+    return;
+  }
+
+  var sheet = spreadsheet.getActiveSheet();
+  var emailsRange = sheet.getRange("J3:J9");
+  var amountsRange = sheet.getRange("I3:I9");
+  var emails = emailsRange.getValues();
+  var amounts = amountsRange.getValues();
+
+  for (var i = 0; i < emails.length; i++) {
+    var email = emails[i][0];
+    var roundedAmount = Math.ceil(amounts[i][0]);
+    if (email && validateEmail(email)) {
+      var emailBody = "Hi " + email + "\nYour Total Amout Due: " + roundedAmount + "\n\nthx. For more info\n" + sheetUrl;
+      Logger.log("Sending email to: " + email);
+      try {
+        MailApp.sendEmail(email, "Dues for month of " + month, emailBody, {noReply: true});
+        Logger.log("Email sent successfully to: " + email);
+      } catch (e) {
+        Logger.log("Failed to send email to: " + email + ". Error: " + e.message);
+      }
+    } else {
+      Logger.log("Invalid or empty email address for row " + (i + 3));
+    }
+  }
+
+  clearSheetForNextMonth(sheet);
+}
+
+function validateEmail(email) {
+  var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(email);
+}
+
+function clearSheetForNextMonth(sheet) {
+  var rangesToClear = ["F22:G22"];
+  rangesToClear.forEach(range => sheet.getRange(range).clear());
+}
+
+function main() {
+  getMonthlyDues();
+}
